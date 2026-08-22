@@ -145,8 +145,20 @@ print_section "Step 1: Ensuring Namespace Exists"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 print_success "Namespace '$NAMESPACE' ready"
 
-# ─── Step 2: Deploy Manifest ────────────────────────────────────────────────
-print_section "Step 2: Deploying Ray Serve"
+# ─── Step 2: Create ConfigMap from qwen_serve.py ────────────────────────────
+print_section "Step 2: Creating qwen-serve-code ConfigMap"
+CODE_DIR="$(dirname "$SCRIPT_DIR")/code"
+if [ ! -f "${CODE_DIR}/qwen_serve.py" ]; then
+    print_error "qwen_serve.py not found at ${CODE_DIR}/qwen_serve.py"
+    exit 1
+fi
+kubectl create configmap qwen-serve-code -n "$NAMESPACE" \
+    --from-file=qwen_serve.py="${CODE_DIR}/qwen_serve.py" \
+    --dry-run=client -o yaml | kubectl apply -f -
+print_success "ConfigMap 'qwen-serve-code' ready"
+
+# ─── Step 3: Deploy Manifest ────────────────────────────────────────────────
+print_section "Step 3: Deploying Ray Serve"
 
 if [ ! -f "${MANIFEST_DIR}/ray-cluster.yaml" ]; then
     print_error "Manifest not found: ${MANIFEST_DIR}/ray-cluster.yaml"
@@ -161,18 +173,20 @@ sed -e "s|\${NAMESPACE}|${NAMESPACE}|g" \
 
 print_success "Deployment manifest applied"
 
-# ─── Step 3: Wait for Pod Ready ──────────────────────────────────────────────
-print_section "Step 3: Waiting for Pod to be Ready"
+# ─── Step 4: Wait for Pod Ready ──────────────────────────────────────────────
+print_section "Step 4: Waiting for Pod to be Ready"
 echo "Waiting for the GPU-scheduled pod to start..."
 
+POD_READY=false
 for i in $(seq 1 60); do
     POD=$(kubectl get pods -n "$NAMESPACE" -l app=ray-serve \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     if [[ -n "$POD" ]]; then
-        POD_READY=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
+        READY=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
         POD_STATUS=$(kubectl get pod "$POD" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        echo "  Pod: $POD ($POD_STATUS, ready=$POD_READY)"
-        if [[ "$POD_READY" == "true" ]]; then
+        echo "  Pod: $POD ($POD_STATUS, ready=$READY)"
+        if [[ "$READY" == "true" ]]; then
+            POD_READY=true
             print_success "Pod is ready"
             break
         fi
@@ -182,8 +196,15 @@ for i in $(seq 1 60); do
     sleep 15
 done
 
-# ─── Step 4: Verify ─────────────────────────────────────────────────────────
-print_section "Step 4: Verifying Deployment"
+if [[ "$POD_READY" != "true" ]]; then
+    print_error "Pod did not become ready within 15 minutes"
+    [[ -n "$POD" ]] && kubectl describe pod "$POD" -n "$NAMESPACE" | tail -30
+    [[ -n "$POD" ]] && kubectl logs "$POD" -n "$NAMESPACE" --tail=50 2>/dev/null || true
+    exit 1
+fi
+
+# ─── Step 5: Verify ─────────────────────────────────────────────────────────
+print_section "Step 5: Verifying Deployment"
 
 kubectl get pods -n "$NAMESPACE" -l app=ray-serve -o wide
 

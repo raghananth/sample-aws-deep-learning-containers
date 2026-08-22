@@ -106,7 +106,7 @@ echo -e "${NC}"
 echo "  Region:       $REGION"
 echo "  Cluster:      $CLUSTER_NAME"
 echo "  K8s Version:  $K8S_VERSION"
-echo "  System Nodes: ${SYSTEM_NODE_COUNT_PER_AZ} per AZ x ${SYSTEM_NODE_TYPE}"
+echo "  System Nodes: ${SYSTEM_NODE_COUNT} x ${SYSTEM_NODE_TYPE}"
 echo "  AWS Auth:     ${AWS_PROFILE:-environment credentials}"
 echo
 
@@ -133,18 +133,14 @@ if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" &>/dev/nul
         print_success "System node group already exists"
     else
         print_warning "System node group not found. Creating..."
-        EXIST_AZS=$(aws ec2 describe-availability-zones --region "$REGION" \
-            --query 'AvailabilityZones[?State==`available`].ZoneName' --output json)
-        EXIST_AZ_COUNT=$(echo "$EXIST_AZS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
-        EXIST_TOTAL=$((SYSTEM_NODE_COUNT_PER_AZ * EXIST_AZ_COUNT))
         eksctl create nodegroup \
             --cluster="$CLUSTER_NAME" \
             --region="$REGION" \
             --name=system-nodes \
             --node-type="$SYSTEM_NODE_TYPE" \
-            --nodes="$EXIST_TOTAL" \
-            --nodes-min="$EXIST_TOTAL" \
-            --nodes-max="$EXIST_TOTAL" \
+            --nodes="$SYSTEM_NODE_COUNT" \
+            --nodes-min="$SYSTEM_NODE_COUNT" \
+            --nodes-max="$SYSTEM_NODE_COUNT" \
             --node-labels="role=system" \
             --managed
         print_success "System node group created"
@@ -227,18 +223,16 @@ print_success "EKS cluster created"
 # ─── Step 2: Create System Node Group ────────────────────────────────────────
 print_section "Step 2: Creating System Node Group"
 
-AZ_COUNT=$(echo "$ALL_AZS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
-TOTAL_NODES=$((SYSTEM_NODE_COUNT_PER_AZ * AZ_COUNT))
-echo "Creating ${SYSTEM_NODE_COUNT_PER_AZ} x ${AZ_COUNT} AZs = ${TOTAL_NODES} total ${SYSTEM_NODE_TYPE} nodes..."
+echo "Creating ${SYSTEM_NODE_COUNT} x ${SYSTEM_NODE_TYPE} nodes..."
 
 eksctl create nodegroup \
     --cluster="$CLUSTER_NAME" \
     --region="$REGION" \
     --name=system-nodes \
     --node-type="$SYSTEM_NODE_TYPE" \
-    --nodes="$TOTAL_NODES" \
-    --nodes-min="$TOTAL_NODES" \
-    --nodes-max="$TOTAL_NODES" \
+    --nodes="$SYSTEM_NODE_COUNT" \
+    --nodes-min="$SYSTEM_NODE_COUNT" \
+    --nodes-max="$SYSTEM_NODE_COUNT" \
     --node-labels="role=system" \
     --managed
 

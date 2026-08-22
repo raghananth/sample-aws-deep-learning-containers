@@ -17,7 +17,7 @@ export NAMESPACE=${NAMESPACE:-"inference"}
 
 # ─── System Node Group ──────────────────────────────────────────────────────
 export SYSTEM_NODE_TYPE=${SYSTEM_NODE_TYPE:-"m7i.xlarge"}
-export SYSTEM_NODE_COUNT_PER_AZ=${SYSTEM_NODE_COUNT_PER_AZ:-1}
+export SYSTEM_NODE_COUNT=${SYSTEM_NODE_COUNT:-1}
 
 # ─── GPU Node Group ─────────────────────────────────────────────────────────
 export GPU_NODE_TYPE=${GPU_NODE_TYPE:-"g5.xlarge"}
@@ -25,8 +25,7 @@ export GPU_NODE_COUNT=${GPU_NODE_COUNT:-1}
 export GPU_NODEGROUP_NAME=${GPU_NODEGROUP_NAME:-"gpu-workers"}
 
 # ─── Container Images ───────────────────────────────────────────────────────
-export ACCOUNT_ID=${ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}
-export DLC_IMAGE=${DLC_IMAGE:-"${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/ray-serve-qwen"}
+export DLC_IMAGE=${DLC_IMAGE:-"public.ecr.aws/deep-learning-containers/ray:serve-ml-cuda-v1.4"}
 
 # ─── Ray Configuration ──────────────────────────────────────────────────────
 export RAY_CLUSTER_NAME=${RAY_CLUSTER_NAME:-"ray-cluster"}

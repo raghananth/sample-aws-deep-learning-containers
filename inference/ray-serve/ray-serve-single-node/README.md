@@ -2,10 +2,6 @@
 
 Deploy Ray Serve on Amazon EKS with a single GPU node using AWS Deep Learning Containers.
 
-## Architecture
-
-![Ray Serve Architecture](Ray-Serve-Architecture.png)
-
 ## Prerequisites
 
 Install the following tools before running any scripts:
@@ -23,7 +19,7 @@ aws sts get-caller-identity
 ## Directory Structure
 
 ```
-ray-serve-single-node-dlc/
+ray-serve-single-node/
       scripts/      # Deployment and teardown scripts for EKS Cluster, Node Groups, and Ray Serve Deployment
       manifest/     # Kubernetes manifests (Deployment YAML)
       code/         # Application to serve Qwen model for inference
@@ -39,11 +35,11 @@ All scripts share a single configuration file: `scripts/env.sh`. Override any va
 | REGION | us-west-2 | AWS region |
 | K8S_VERSION | 1.35 | Kubernetes version |
 | SYSTEM_NODE_TYPE | m7i.xlarge | Instance type for system nodes |
-| SYSTEM_NODE_COUNT_PER_AZ | 1 | System nodes per availability zone |
+| SYSTEM_NODE_COUNT | 1 | Number of system nodes |
 | GPU_NODE_TYPE | g5.xlarge | Instance type for GPU worker nodes |
 | GPU_NODE_COUNT | 1 | Number of GPU nodes |
 | GPU_NODEGROUP_NAME | gpu-workers | Name of the GPU node group |
-| DLC_IMAGE | $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/ray-serve-qwen | Ray DLC container image |
+| DLC_IMAGE | public.ecr.aws/deep-learning-containers/ray:serve-ml-cuda-v1.4 | Ray Serve DLC container image |
 | RAY_CLUSTER_NAME | ray-cluster | Name of the Deployment |
 | NAMESPACE | inference | Kubernetes namespace for Ray Serve pod |
 
@@ -62,13 +58,13 @@ CURRENT_DIR=$(pwd)
 Run this command to setup export variables
 
 ```bash
-cd $CURRENT_DIR/ray-serve-single-node-dlc/scripts
+cd $CURRENT_DIR/ray-serve-single-node/scripts
 source ./env.sh
 ```
 
-## Build Docker Image for Deployment
+## Application code
 
-The application we're containerizing is a Ray Serve deployment that loads the Qwen3-VL-2B vision-language model onto a GPU-powered instance and exposes it as an HTTP endpoint. When a request arrives with an image URL and a text prompt, the model generates a natural-language response describing or answering questions about the image.
+The application we're deploying is a Ray Serve deployment that loads the Qwen3-VL-2B vision-language model onto a GPU-powered instance and exposes it as an HTTP endpoint. When a request arrives with an image URL and a text prompt, the model generates a natural-language response describing or answering questions about the image.
 
 Here's the core of `code/qwen_serve.py`:
 
@@ -89,143 +85,10 @@ class QwenVLService:
 app = QwenVLService.bind()
 ```
 
-To build the Docker image we'll upload the source to S3 and kick off an AWS CodeBuild job. This avoids needing a local GPU or Docker daemon with GPU support.
-
-### Create the S3 bucket
-
-```bash
-export AWS_REGION=us-west-2
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export S3_BUCKET=ray-serve-qwen-code-${ACCOUNT_ID}
-
-aws s3 mb s3://$S3_BUCKET --region $AWS_REGION
-```
-
-### Package and upload code
-
-```bash
-cd $CURRENT_DIR/ray-serve-single-node-dlc/code
-```
-
-```bash
-rm ray-serve-qwen-code.zip
-zip -r ray-serve-qwen-code.zip Dockerfile qwen_serve.py requirements.txt buildspec.yml
-aws s3 cp ray-serve-qwen-code.zip s3://$S3_BUCKET/ray-serve-qwen-code.zip
-```
-### Create the CodeBuild service role
-
-* Create the IAM role
-* Attach policies: ECR push, CloudWatch Logs, S3 read
-* Get the role ARN
-
-```bash
-cat > /tmp/codebuild-trust-policy.json << 'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "codebuild.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-EOF
-
-aws iam create-role \
-  --role-name ray-serve-codebuild-role \
-  --assume-role-policy-document file:///tmp/codebuild-trust-policy.json
-
-aws iam attach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-
-aws iam attach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
-
-aws iam attach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
-
-export CODEBUILD_ROLE_ARN=$(aws iam get-role --role-name ray-serve-codebuild-role \
-  --query 'Role.Arn' --output text)
-echo $CODEBUILD_ROLE_ARN
-
-rm /tmp/codebuild-trust-policy.json
-```
-
-### Create the ECR repository
-
-CodeBuild pushes the final image to this ECR repository. It must exist before the build runs.
-
-```bash
-aws ecr create-repository \
-  --repository-name ray-serve-qwen \
-  --region $AWS_REGION || echo "Repository already exists, skipping."
-```
-
-### Use S3 as CodeBuild source
-
-```bash
-aws codebuild delete-project \
-  --name ray-serve-qwen-build
-aws codebuild create-project \
-  --name ray-serve-qwen-build \
-  --source type=S3,location=$S3_BUCKET/ray-serve-qwen-code.zip,buildspec=buildspec.yml \
-  --artifacts type=NO_ARTIFACTS \
-  --environment type=LINUX_GPU_CONTAINER,computeType=BUILD_GENERAL1_LARGE,image=aws/codebuild/standard:7.0,privilegedMode=true \
-  --service-role $CODEBUILD_ROLE_ARN \
-  --region us-west-2
-```
-
-### Run the CodeBuild project
-
-* Start the build
-* Monitor build progress
-* Stream build logs (poll until complete)
-* View the final build result
-
-```bash
-BUILD_ID=$(aws codebuild start-build \
-  --project-name ray-serve-qwen-build \
-  --region us-west-2 \
-  --query 'build.id' --output text)
-echo "Build started: $BUILD_ID"
-```
-
-Check the build status from these commands
-
-```bash
-aws codebuild batch-get-builds --ids $BUILD_ID --region us-west-2 \
-  --query 'builds[0].{Status:buildStatus,Phase:currentPhase,StartTime:startTime}' --output table
-
-while true; do
-  STATUS=$(aws codebuild batch-get-builds --ids $BUILD_ID --region us-west-2 \
-    --query 'builds[0].buildStatus' --output text)
-  echo "$(date +%H:%M:%S) Status: $STATUS"
-  if [ "$STATUS" != "IN_PROGRESS" ]; then break; fi
-  sleep 30
-done
-```
-
-```bash
-aws codebuild batch-get-builds --ids $BUILD_ID --region us-west-2 \
-  --query 'builds[0].{Status:buildStatus,StartTime:startTime,EndTime:endTime,Duration:phases[-1].durationInSeconds}' \
-  --output table
-```
-
-Once complete, the Docker image is available at:
-```
-$ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/ray-serve-qwen:latest
-```
-
 ## Step-by-step deployment
 
 ```bash
-cd $CURRENT_DIR/ray-serve-single-node-dlc/scripts
+cd $CURRENT_DIR/ray-serve-single-node/scripts
 ```
 
 ### Step 1: Create the EKS cluster
@@ -290,7 +153,7 @@ kubectl exec -n inference deploy/ray-cluster -- nvidia-smi
 ## Teardown (reverse order)
 
 ```bash
-cd $CURRENT_DIR/ray-serve-single-node-dlc/scripts
+cd $CURRENT_DIR/ray-serve-single-node/scripts
 ```
 
 ### Delete the Ray Serve deployment
@@ -316,60 +179,6 @@ Removes the GPU worker nodes from the cluster. Takes 3-5 minutes.
 ```
 
 Deletes the entire EKS cluster including all node groups and associated CloudFormation stacks. Takes 10-15 minutes.
-
-### Delete the S3 bucket
-
-```bash
-export AWS_REGION=us-west-2
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export S3_BUCKET=ray-serve-qwen-code-${ACCOUNT_ID}
-
-aws s3 rb s3://$S3_BUCKET --region $AWS_REGION --force
-```
-
-Deletes the S3 bucket that hosts the code along with the contents.
-
-### Delete the CodeBuild service role
-
-```bash
-aws iam detach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
-
-aws iam detach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
-
-aws iam detach-role-policy \
-  --role-name ray-serve-codebuild-role \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-
-aws iam delete-role \
-  --role-name ray-serve-codebuild-role
-```
-
-Detaches the codebuild role from policies and deletes the codebuild role.
-
-
-### Delete the ECR repository
-
-
-```bash
-aws ecr delete-repository \
-  --repository-name ray-serve-qwen \
-  --region $AWS_REGION --force
-```
-
-Deletes the ECR repository along with the container images.
-
-### Delete the CodeBuild project
-
-```bash
-aws codebuild delete-project \
-  --name ray-serve-qwen-build
-```
-
-Deletes the codebuild project.
 
 ## Scripts Quick Reference
 

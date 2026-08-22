@@ -1,3 +1,4 @@
+# qwen_serve.py is provided via a ConfigMap created by deploy_ray_cluster.sh.
 # Variables: ${NAMESPACE}, ${DLC_IMAGE}, ${RAY_CLUSTER_NAME}
 ---
 apiVersion: apps/v1
@@ -29,13 +30,6 @@ spec:
           ports:
             - containerPort: 8000
               name: serve
-          env:
-            - name: RAY_SERVE_HTTP_HOST
-              value: "0.0.0.0"
-            - name: TRANSFORMERS_CACHE
-              value: "/mnt/fsx/models"
-            - name: HF_HOME
-              value: "/mnt/fsx/models"
           resources:
             limits:
               nvidia.com/gpu: "1"
@@ -48,22 +42,27 @@ spec:
           livenessProbe:
             tcpSocket:
               port: 8000
-            initialDelaySeconds: 120
+            initialDelaySeconds: 300
             periodSeconds: 10
             failureThreshold: 30
           readinessProbe:
             tcpSocket:
               port: 8000
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 5
-            failureThreshold: 10
+            failureThreshold: 60
           securityContext:
             capabilities:
               add: ["IPC_LOCK"]
           volumeMounts:
+            - name: qwen-serve-code
+              mountPath: /app
             - name: dshm
               mountPath: /dev/shm
       volumes:
+        - name: qwen-serve-code
+          configMap:
+            name: qwen-serve-code
         - name: dshm
           emptyDir:
             medium: Memory
