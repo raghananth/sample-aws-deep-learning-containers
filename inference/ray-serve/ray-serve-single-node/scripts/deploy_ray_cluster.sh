@@ -69,6 +69,7 @@ cleanup() {
 
     print_section "Deleting Deployment"
     kubectl delete deployment "$RAY_CLUSTER_NAME" -n "$NAMESPACE" --ignore-not-found
+    kubectl delete configmap qwen-serve-code -n "$NAMESPACE" --ignore-not-found
     print_success "Deployment '$RAY_CLUSTER_NAME' deleted"
 
     echo "Waiting for pods to terminate..."
