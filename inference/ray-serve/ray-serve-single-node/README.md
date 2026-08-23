@@ -139,7 +139,7 @@ curl --fail --silent --show-error \
   --request POST "http://127.0.0.1:8000/" \
   --header "Content-Type: application/json" \
   --data '{
-    "image_url": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+    "image_url": "https://s3.amazonaws.com/model-server/inputs/kitten.jpg",
     "prompt": "Describe this image briefly."
   }'
 ```
