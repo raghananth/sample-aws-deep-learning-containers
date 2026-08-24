@@ -14,8 +14,8 @@ class QwenVLService:
  
     async def __call__(self, request): 
         body = await request.json() 
-        image_url = body.get("image_url", "https://s3.amazonaws.com/model-server/inputs/kitten.jpg") 
-        prompt = body.get("prompt", "Describe this image briefly.") 
+        image_url = body.get("image_url") 
+        prompt = body.get("prompt") 
  
         messages = [ 
             { 
