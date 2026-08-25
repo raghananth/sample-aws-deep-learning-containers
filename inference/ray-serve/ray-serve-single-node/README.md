@@ -113,7 +113,7 @@ This adds a separate managed node group specifically for GPU workloads. The node
 ./deploy_ray_cluster.sh
 ```
 
-This is where the application actually lands on the cluster. The script creates the `inference` namespace, then applies the Kubernetes Deployment manifest (`manifest/ray-cluster.yaml`) after substituting your image URI and naming variables. The manifest schedules a single pod on the GPU worker node, starts a Ray head process, launches Ray Serve on port 8000, and runs the `qwen_serve:app` entrypoint. It also mounts a 2 Gi shared-memory volume (`/dev/shm`) — required by PyTorch for efficient GPU data loading — and sets resource limits to claim exactly 1 GPU. The script polls until the pod's readiness probe passes (TCP check on port 8000). Takes 2-5 minutes depending on model download speed.
+This is where the application actually lands on the cluster. The script creates the `inference` namespace, then applies the Kubernetes Deployment manifest (`manifest/ray-cluster.yaml`) after substituting your image URI and naming variables. The manifest schedules a single pod on the GPU worker node, starts a Ray head process, launches Ray Serve on port 8000, and runs the `qwen_serve:app` entrypoint. It also mounts a 2 Gi shared-memory volume (`/dev/shm`) — required by PyTorch for efficient GPU data loading — and sets resource limits to claim exactly 1 GPU. The script polls until the pod is running. The model keeps loading for another 1-2 minutes after that, so the endpoint won't respond immediately — if your first request is refused, wait briefly and retry. Takes 2-5 minutes depending on model download speed.
 
 ### Check status
 

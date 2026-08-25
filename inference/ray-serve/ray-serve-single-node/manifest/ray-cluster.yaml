@@ -25,7 +25,7 @@ spec:
             - |
               ray start --head --num-gpus=1 &
               sleep 5
-              serve start --http-host=0.0.0.0 --http-port=8000
+              serve start --http-port=8000
               serve run qwen_serve:app --app-dir /app
           ports:
             - containerPort: 8000
